@@ -1,0 +1,1 @@
+![english manual](Manual_ja.jpg)
