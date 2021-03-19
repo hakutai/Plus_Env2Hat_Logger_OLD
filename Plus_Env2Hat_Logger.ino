@@ -9,10 +9,12 @@
  * @note
  * @version
  *   2021/03/16 Version 1.00
+ *   2021/03/17 Version 1.01　ログをシリアルモニタへ送信機能
  * 
 */
 
-//#define   DEBUG_MODE
+#define   DEBUG_MODE
+#define   DEVICE_NAME         "M5StickLogger"
 
 #include <M5StickCPlus.h>
 #include <math.h>
@@ -20,6 +22,12 @@
 #include <Wire.h>
 #include "Adafruit_Sensor.h"
 #include <Adafruit_BMP280.h>
+
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
 
 /*---------------------------------------------------------
  * 各センサー用変数
@@ -75,54 +83,54 @@ typedef struct PressArray_ {            //  RTCメモリへ保存構造体
 #define MAX_PRESSARRAY   48             // 配列のサイズ
 #define CLEAR_PRESSARRAY {0,0,0,0,0}    // 構造体初期化値
 #ifdef DEBUG_MODE
-RTC_DATA_ATTR PressArray presAry[MAX_PRESSARRAY] = { { 16, 00, 1013, 22, 36 }, //  0:00
-                                                     { 16, 30, 1013, 20, 38 }, //  0:30
-                                                     { 16, 00, 1013, 20, 39 }, //  1:00
-                                                     { 16, 30, 1013, 20, 39 }, //  1:30 
-                                                     { 16, 00, 1013, 20, 39 }, //  2:00
-                                                     { 16, 30, 1012, 21, 39 }, //  2:30 
-                                                     { 16, 00, 1012, 21, 40 }, //  3:00
-                                                     { 16, 30, 1012, 21, 40 }, //  3:30
-                                                     { 16, 00, 1012, 21, 40 }, //  4:00
-                                                     { 16, 30, 1012, 20, 40 }, //  4:30 
-                                                     { 16, 00, 1011, 21, 40 }, //  5:00
-                                                     { 16, 30, 1011, 21, 40 }, //  5:30 
-                                                     { 16, 00, 1011, 20, 40 }, //  6:00
-                                                     { 16, 30, 1011, 20, 40 }, //  6:30 
-                                                     { 16, 00, 1010, 20, 40 }, //  7:00
-                                                     { 16, 30, 1010, 22, 40 }, //  7:30 
-                                                     { 16, 00, 1009, 22, 43 }, //  8:00
-                                                     { 16, 30, 1010, 23, 47 }, //  8:30
-                                                     { 16, 00, 1010, 22, 29 }, //  9:00
-                                                     { 16, 30, 1012, 22, 36 }, //  9:30
-                                                     { 16, 00, 1010, 25, 24 }, // 10:00
-                                                     { 16, 30, 1009, 26, 22 }, // 10:30
-                                                     { 16, 00, 1008, 26, 22 }, // 11:00
-                                                     { 16, 30, 1007, 29, 19 }, // 11:30
-                                                     { 16, 10, 1006, 30, 20 }, // 12:00
-                                                     { 16, 37, 1005, 30, 22 }, // 12:30
-                                                     { 16, 00, 1004, 30, 24 }, // 13:00
-                                                     { 15, 30, 0000, 00, 00 }, // 13:30
-                                                     { 15, 00, 0000, 00, 00 }, // 14:00
-                                                     { 15, 30, 0000, 00, 00 }, // 14:30
-                                                     { 15, 00, 0000, 00, 00 }, // 15:00
-                                                     { 15, 30, 0000, 00, 00 }, // 15:30
-                                                     { 15, 00, 0000, 00, 00 }, // 16:00
-                                                     { 15, 30, 0000, 00, 00 }, // 16:30
-                                                     { 15, 00, 0000, 00, 00 }, // 17:00
-                                                     { 15, 30, 0000, 00, 00 }, // 17:30
-                                                     { 15, 00, 0000, 00, 00 }, // 18:00
-                                                     { 15, 49, 1014, 28, 13 }, // 18:30
-                                                     { 15, 00, 1014, 27, 14 }, // 19:00
-                                                     { 15, 30, 1016, 23, 22 }, // 19:30
-                                                     { 15, 00, 1016, 23, 23 }, // 20:00
-                                                     { 15, 30, 1016, 22, 24 }, // 20:30
-                                                     { 15, 00, 1014, 22, 26 }, // 21:00
-                                                     { 15, 30, 1014, 24, 29 }, // 21:30
-                                                     { 15, 00, 1014, 26, 29 }, // 22:00
-                                                     { 15, 30, 1014, 24, 30 }, // 22:30
-                                                     { 15, 00, 1013, 24, 31 }, // 23:00
-                                                     { 15, 30, 1013, 24, 33 }, // 23:30
+RTC_DATA_ATTR PressArray presAry[MAX_PRESSARRAY] = { { 17, 00, 1005, 23, 36 }, //  0:00
+                                                     { 17, 30, 1005, 23, 37 }, //  0:30
+                                                     { 17, 00, 1006, 23, 37 }, //  1:00
+                                                     { 17, 30, 1006, 23, 37 }, //  1:30 
+                                                     { 17, 00, 1006, 23, 37 }, //  2:00
+                                                     { 17, 30, 1006, 22, 37 }, //  2:30 
+                                                     { 17, 00, 1006, 22, 37 }, //  3:00
+                                                     { 17, 30, 1006, 22, 37 }, //  3:30
+                                                     { 17, 00, 1007, 22, 37 }, //  4:00
+                                                     { 17, 30, 1007, 22, 38 }, //  4:30 
+                                                     { 17, 00, 1007, 22, 38 }, //  5:00
+                                                     { 17, 30, 1008, 22, 38 }, //  5:30 
+                                                     { 17, 00, 1008, 22, 38 }, //  6:00
+                                                     { 17, 30, 1008, 22, 38 }, //  6:30 
+                                                     { 17, 00, 1008, 22, 38 }, //  7:00
+                                                     { 17, 30, 1009, 22, 38 }, //  7:30 
+                                                     { 17, 00, 1009, 22, 38 }, //  8:00
+                                                     { 17, 30, 1009, 22, 38 }, //  8:30
+                                                     { 17, 00, 1009, 22, 39 }, //  9:00
+                                                     { 17, 30, 1013, 22, 38 }, //  9:30
+                                                     { 17, 00, 1010, 22, 36 }, // 10:00
+                                                     { 17, 30, 1010, 24, 33 }, // 10:30
+                                                     { 17, 00, 1010, 27, 22 }, // 11:00
+                                                     { 17, 30, 1010, 27, 20 }, // 11:30
+                                                     { 17, 10, 1009, 27, 19 }, // 12:00
+                                                     { 17, 37, 1009, 28, 19 }, // 12:30
+                                                     { 17, 00, 1009, 28, 18 }, // 13:00
+                                                     { 17, 30, 1009, 27, 19 }, // 13:30
+                                                     { 17, 00, 1009, 27, 18 }, // 14:00
+                                                     { 17, 30, 1009, 27, 19 }, // 14:30
+                                                     { 17, 00, 1009, 27, 19 }, // 15:00
+                                                     { 17, 30, 1009, 27, 20 }, // 15:30
+                                                     { 17, 00, 1010, 29, 19 }, // 16:00
+                                                     { 16, 30, 1003, 28, 28 }, // 16:30
+                                                     { 16, 00, 1003, 27, 31 }, // 17:00
+                                                     { 16, 30, 1003, 26, 33 }, // 17:30
+                                                     { 16, 00, 1004, 26, 34 }, // 18:00
+                                                     { 16, 49, 1004, 26, 35 }, // 18:30
+                                                     { 16, 00, 1004, 27, 35 }, // 19:00
+                                                     { 16, 30, 1005, 25, 35 }, // 19:30
+                                                     { 16, 00, 1006, 24, 34 }, // 20:00
+                                                     { 16, 30, 1003, 23, 34 }, // 20:30
+                                                     { 16, 00, 1004, 23, 35 }, // 21:00
+                                                     { 16, 30, 1004, 23, 36 }, // 21:30
+                                                     { 16, 00, 1004, 23, 36 }, // 22:00
+                                                     { 16, 30, 1004, 23, 36 }, // 22:30
+                                                     { 16, 00, 1005, 23, 36 }, // 23:00
+                                                     { 16, 30, 1005, 23, 36 }, // 23:30
                                                     };
 #else
 RTC_DATA_ATTR PressArray presAry[MAX_PRESSARRAY] = { CLEAR_PRESSARRAY, CLEAR_PRESSARRAY, CLEAR_PRESSARRAY, CLEAR_PRESSARRAY,
@@ -154,11 +162,37 @@ uint16_t  kAltitude = 0;                      // 標高校正用カウンタ
 int       logListOffset = 0;
 
 /*
+ * BLE 関係
+ */
+#define SERVICE_UUID                   "181a"                                        // Environment Sensing UUID(0000181a-0000-1000-8000-00805f9b34fb)
+#define CHARACTERISTIC_UUID            "156f7abe-87c8-11eb-8dcd-0242ac130003"        // Generate https://www.uuidgenerator.net/
+
+BLEServer         *pBLEServer          = NULL;
+BLECharacteristic *pBLECharacteristic  = NULL;
+bool              bleConnected          = false;
+bool              oldBleConnected       = false;
+#define           BLEDEVICE_NAME         "StickLogger"
+#ifdef DEBUG_MODE
+RTC_DATA_ATTR uint8_t bleDeviceNumber  = 1;             // 0:BLE off / 1～7:Number   BLEDEVICE_NAME + bleDeviceNumber
+#else
+RTC_DATA_ATTR uint8_t bleDeviceNumber  = 0;             // 0:BLE off / 1～7:Number   BLEDEVICE_NAME + bleDeviceNumber
+#endif
+
+struct _BLEDataPacket {   // Bluetoothで送信するデータ
+  uint16_t        day;            // 日付         month << 8 | day
+  uint16_t        time;           // データ時刻    hh << 8 | mm
+  int16_t         pressure;       // 気圧         int(pres *  10)
+  int16_t         temperature;    // 温度         int(temp * 100)
+  int16_t         humidity;       // 湿度         int(temp * 100)
+  uint16_t        voltage;        // 電圧         int(volt * 100)
+} bleDataPacket;  
+
+/*
  * 電源監視用
  */
 uint8_t     extPW = false;                    /* 電源使用 true:外部電源 / false:内部電源 */
-double      pwVolt;                           // Power Voltage
-double      pwCurt;                           // Power Current
+float       pwVolt;                           // Power Voltage
+float       pwCurt;                           // Power Current
 
 /*===========================================================================
  * 汎用変数
@@ -195,6 +229,23 @@ void xSetSleep(void)          //version M5stick-C plus
 uint8_t           wakeUpCause;      // 起動理由 esp_sleep_get_wakeup_cause()の返り値
 
 
+/*
+ * BLE 関係　関数
+ */
+void BLE_Setup();               // BLEデバイス初期化
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      bleConnected = true;
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      bleConnected = false;
+    }
+};
+
+
+
 /*＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
  *＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
  * SETUP
@@ -215,7 +266,7 @@ void setup() {
   lcdDblBuf.setSwapBytes(false);
   
   pinMode(M5_BUTTON_HOME, INPUT);
-  setCpuFrequencyMhz(20);             // CPUを20MHzで駆動
+  setCpuFrequencyMhz(80);             // CPUを20MHzで駆動 -> BLEを使用するため80Mhzに変更
 
   if (!bmp280.begin(0x76)){  
       Serial.println("Could not find a valid BMP280 sensor, check wiring!");
@@ -227,6 +278,9 @@ void setup() {
                   Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
                   Adafruit_BMP280::FILTER_X16,      /* Filtering. */
                   Adafruit_BMP280::STANDBY_MS_1000); /* Standby time. */
+
+    /* BLE SETUP */
+  BLE_Setup();  
 
   if (!resumeOn) scrnMode = 0;        // スクリーンの復帰
   if (demoMode != 0) demoMode = millis() + DEMOTIME;
@@ -241,11 +295,19 @@ void setup() {
   /* 起動理由の格納 */
   wakeUpCause = esp_sleep_get_wakeup_cause();
 
+  if (wakeUpCause != ESP_SLEEP_WAKEUP_TIMER) {
+    i = CalcPressArrayIndex(rtcTime.Hours,rtcTime.Minutes);
 
-#ifdef DEBUG_MODE
-  Serial.printf("Size of presAry: %d\r\n",sizeof(presAry));
-#endif
-
+    bleDataPacket.day         = rtcDate.Month << 8 | presAry[i].day;
+    bleDataPacket.time        = rtcTime.Hours << 8 | presAry[i].minutes;
+    bleDataPacket.pressure    = (int)(presAry[i].pressure * 10.);
+    bleDataPacket.temperature = (int)(presAry[i].temperature * 100.);
+    bleDataPacket.humidity    = (int)(presAry[i].humidity * 100.);
+    bleDataPacket.voltage     = (int)(pwVolt * 100.);
+    pBLECharacteristic->setValue((uint8_t*)&bleDataPacket, sizeof(bleDataPacket));
+    pBLECharacteristic->notify();
+    delay(10);
+  }
 }
 
 /*******************************************************
@@ -351,7 +413,6 @@ void loop() {
     
 
     i = CalcPressArrayIndex(rtcTime.Hours,rtcTime.Minutes);
-    Serial.printf("Time %2d:%02d %d\r\n",rtcTime.Hours,rtcTime.Minutes,i);
     /*--- 気圧をスローメモリーに保存 0,3,6,9,12,15,18,21時の３時間ごとに保存 ---*/
     if (presAry[i].day != rtcDate.Date) {
       presAry[i].day          = rtcDate.Date;
@@ -359,6 +420,17 @@ void loop() {
       presAry[i].temperature  = (int)temperature;
       presAry[i].humidity     = (int)humidity;
       presAry[i].pressure     = (int)pressure;
+
+      // BLE送信
+      bleDataPacket.day         = rtcDate.Month << 8 | rtcDate.Date;
+      bleDataPacket.time        = rtcTime.Hours << 8 | rtcTime.Minutes;
+      bleDataPacket.pressure    = (int)(pressure * 10.);
+      bleDataPacket.temperature = (int)(temperature * 100.);
+      bleDataPacket.humidity    = (int)(humidity * 100.);
+      bleDataPacket.voltage     = (int)(pwVolt * 100.);
+      pBLECharacteristic->setValue((uint8_t*)&bleDataPacket, sizeof(bleDataPacket));
+      pBLECharacteristic->notify();
+      delay(10);
     }
 
   /*--- DeepSleep の設定 
@@ -381,6 +453,42 @@ void loop() {
 /*=====================================================================
  * Functions
  */
+/*
+ * BLE Setup
+ */
+ void BLE_Setup() {
+
+  sprintf(tmpStr,"%s%d",BLEDEVICE_NAME,bleDeviceNumber);
+  BLEDevice::init(tmpStr);
+
+      // Create BLE-Server
+  pBLEServer = BLEDevice::createServer();
+  pBLEServer->setCallbacks(new MyServerCallbacks());
+
+      // Create the BLE Service
+  BLEService *pBLEService = pBLEServer->createService(SERVICE_UUID);
+
+      // Create a BLE Characteristic
+  pBLECharacteristic = pBLEService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ   |
+                      BLECharacteristic::PROPERTY_WRITE  |
+                      BLECharacteristic::PROPERTY_NOTIFY |
+                      BLECharacteristic::PROPERTY_INDICATE
+                    );
+                    
+  pBLECharacteristic->addDescriptor(new BLE2902());
+
+  // Start the service
+  pBLEService->start();
+
+  // Start advertising
+  BLEAdvertising *pBLEAdvertising = BLEDevice::getAdvertising();
+  pBLEAdvertising->addServiceUUID(SERVICE_UUID);
+  pBLEAdvertising->setScanResponse(false);
+  pBLEAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
+  BLEDevice::startAdvertising();
+ }
 /*=====================================================================================================
  * メニュー表示
  * 　　スクリーンの向き
@@ -429,12 +537,15 @@ void SetupMenu() {
     lcdDblBuf.setCursor(40,80);   
       lcdDblBuf.printf("%4d/%02d/%02d %02d:%02d",
                           rtcDate.Year,rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes);
+      //-- ログ出力
+    lcdDblBuf.setCursor(0,100); lcdDblBuf.printf("Log Output");
+    lcdDblBuf.setCursor(160,100); lcdDblBuf.printf("Serial");
       //-- デモモード
-    lcdDblBuf.setCursor(0,100);    lcdDblBuf.printf("DemoMode");
+/*    lcdDblBuf.setCursor(0,100);    lcdDblBuf.printf("DemoMode");
     lcdDblBuf.setCursor(200,100);
     if (demoMode) lcdDblBuf.printf(" ON");
     else          lcdDblBuf.printf("OFF");
-      //-- RETURN
+*/      //-- RETURN
     lcdDblBuf.setCursor(0,120);   lcdDblBuf.printf("RETURN");
 
     M5.update();
@@ -518,7 +629,24 @@ void SetupMenu() {
                 lcdDblBuf.setCursor(40 + 12 * 14,80);   
                 lcdDblBuf.printf("%02d",rtcTime.Minutes);
                 break;
-      case 9:     //デモモード
+#ifdef DEBUG_MODE
+      case 9:     // ログ出力
+                lcdDblBuf.setCursor(160,100); lcdDblBuf.printf("Serial");
+                if (btnAwasPressed) {
+                  M5.Lcd.setTextSize(2);
+                  M5.Lcd.setTextFont(1);
+                  for (i = 0; i < MAX_PRESSARRAY; i++) {
+                    Serial.printf("{ %2d, %2d, %4d, %2d, %2d },  // %2d:%02d\r\n",
+                      presAry[i].day,presAry[i].minutes,presAry[i].pressure,presAry[i].temperature,presAry[i].humidity,
+                      int(i/2),i%2*30);
+                    
+                    M5.Lcd.setCursor(160,100); M5.Lcd.printf("%6d",i);
+                  }
+                }
+                lcdDblBuf.setCursor(160,100); lcdDblBuf.printf("Serial");
+                break;
+#else
+      case  9:    //デモモード
                 if (btnAwasPressed) {
                   if (demoMode != 0) demoMode = 0;
                   else               demoMode = millis() + DEMOTIME;
@@ -527,6 +655,7 @@ void SetupMenu() {
                 if (demoMode != 0) lcdDblBuf.printf(" ON");
                 else               lcdDblBuf.printf("OFF");
                 break;
+#endif
       default:
                 lcdDblBuf.setCursor(0,120);   lcdDblBuf.printf("RETURN");
                 menuExit = false;
@@ -588,7 +717,7 @@ void DispTempHumi() {
   lcdDblBuf.setTextColor(ToRGB565(32,32,32));
   lcdDblBuf.drawString(tmpStr,x+5,y+6,4);
   lcdDblBuf.setTextColor(TFT_WHITE);
-  lcdDblBuf.drawString(tmpStr,x,y);
+  lcdDblBuf.drawString(tmpStr,x,y,4);
   lcdDblBuf.setTextSize(1);  lcdDblBuf.setCursor(160,67); lcdDblBuf.printf("%%");
 
   x = 165; y = 25;
