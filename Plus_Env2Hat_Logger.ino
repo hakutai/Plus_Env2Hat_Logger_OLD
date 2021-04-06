@@ -4,20 +4,21 @@
 */
 
 /**
- * @file Plus_Env2Hat.ino
+ * @file Plus_Env2Hat_Logger.ino
  * 
  * @note
  *   2021/03/26 BLEの接続ー＞切断ー＞接続の手順が正しいかは不明、デバイス名を変える時は一度オフにし、再度違い名前にする
  *                接続・切断の関数化
  *   
  * @version
- *   2021/03/16 Version 1.00
+ *   2021/04/06 Version 1.03　BLEライブラリをNimBLE変更
+ *   2021/04/01 Version 1.02　BLE送信実装
  *   2021/03/17 Version 1.01　ログをシリアルモニタへ送信機能
+ *   2021/03/16 Version 1.00
  * 
 */
 
 #define   DEBUG_MODE
-
 
 #include <M5StickCPlus.h>
 #include <math.h>
@@ -26,11 +27,7 @@
 #include "Adafruit_Sensor.h"
 #include <Adafruit_BMP280.h>
 
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
-
+#include <NimBLEDevice.h>
 
 /*---------------------------------------------------------
  * 各センサー用変数
@@ -54,34 +51,42 @@ int         discomfortIndex = 0.0;    // 不快指数（discomfort index）
 #define     MAXSET_TEMPLOW    -20
 #define     MAXSET_TEMPHIGH    40
 
-RTC_DATA_ATTR boolean     temperatureAlarm  = false;
-RTC_DATA_ATTR int16_t     temperatureLow    = -10;      // 温度下限
-RTC_DATA_ATTR int16_t     temperatureHigh   =  20;      // 温度上限        
+RTC_DATA_ATTR boolean     tempAlarm       = false;
+RTC_DATA_ATTR int16_t     tempAlarmLow    = -10;          // 温度下限
+RTC_DATA_ATTR int16_t     tempAlarmHigh   =  20;          // 温度上限        
 
-RTC_DateTypeDef           rtcDate;    // 年月日
-RTC_TimeTypeDef           rtcTime;    // 日時秒
-
-        // 動作設定用
-#define WAKEUP_TIME       SLEEP_MIN(30)         // ディープ休眠時間
-#define DEMOTIME          5000                  // デモモードの画面切り替え時間（5000ミリ秒）
-
-RTC_DATA_ATTR uint8_t     scrnMode      = 0;    // LCD表示内容　(0:温度・湿度,1:気圧・高度,2:方位,3:履歴）
-RTC_DATA_ATTR uint8_t     lcdDirection  = 1;    // LCDの向き　 1 or 3  
-RTC_DATA_ATTR uint8_t     lcdBrightness = 9;    // LCDの明るさ 7 to 15
-RTC_DATA_ATTR uint32_t    defaultPowerOffTime = 20000;      // スリープ時間
-RTC_DATA_ATTR boolean     resumeOn      = false;  // レジューム（スリープ時の表示に戻る）
-uint32_t                  demoMode      = 0;    // デモモード　0:オフ,>0:オン（切替までのミリ秒）
-
-uint32_t    powerOffTime = defaultPowerOffTime;    // ディープスリープへ移行する時間
-
-        // 画面用　ダブルバッファー他
-int16_t       scrnWidth,scrnHeight;   // スクリーン（LCD)縦横
-TFT_eSprite   lcdDblBuf = TFT_eSprite(&M5.Lcd);   // ダブルバッファー
-
-uint32_t      update_time   = 0;                  // LCD書き換え間隔管理
+RTC_DateTypeDef           rtcDate;                          // 年月日
+RTC_TimeTypeDef           rtcTime;                          // 日時秒
 
 /*
- * 気圧変動の確認用にスローメモリーへ保存する構造体、日付・気温・湿度・気圧を３時間ごとに保存
+ * 気圧関連
+ */
+#define   DEFAULT_SEALEVEL        1013.25     // 標準気圧
+#define   SEALEVEL_TEMPERATURE    15          // 海面温度
+RTC_DATA_ATTR float     seaLevelPressure = DEFAULT_SEALEVEL;      // 設定海面気圧
+
+
+        // 動作設定用
+#define WAKEUP_TIME       SLEEP_MIN(30)                     // ディープ休眠時間
+#define DEMOTIME          5000                              // デモモードの画面切り替え時間（5000ミリ秒）
+
+RTC_DATA_ATTR uint8_t     scrnMode      = 0;                // LCD表示内容　(0:温度・湿度,1:履歴）
+RTC_DATA_ATTR uint8_t     lcdDirection  = 1;                // LCDの向き　 1 or 3  
+RTC_DATA_ATTR uint8_t     lcdBrightness = 9;                // LCDの明るさ 7 to 15
+RTC_DATA_ATTR uint32_t    defaultPowerOffTime = 20000;      // スリープ時間
+RTC_DATA_ATTR boolean     resumeOn      = false;            // レジューム（スリープ時の表示に戻る）
+uint16_t                  demoMode      = 0;                // デモモード　0:オフ,>0:オン（切替までのミリ秒）
+
+uint32_t                  powerOffTime = defaultPowerOffTime;    // ディープスリープへ移行する時間
+
+        // 画面用　ダブルバッファー他
+int16_t       scrnWidth,scrnHeight;                         // スクリーン（LCD)縦横
+TFT_eSprite   lcdDblBuf = TFT_eSprite(&M5.Lcd);             // ダブルバッファー
+
+uint32_t      update_time   = 0;                            // LCD書き換え間隔管理
+
+/*
+ * 気圧変動の確認用にスローメモリーへ保存する構造体、日付・気温・湿度・気圧を30分毎に保存
  */
 typedef struct PressArray_ {            //  RTCメモリへ保存構造体
   int      day;                         //    日
@@ -161,14 +166,6 @@ RTC_DATA_ATTR PressArray presAry[MAX_PRESSARRAY] = { CLEAR_PRESSARRAY, CLEAR_PRE
 #endif
 
 /*
- * 気圧関連
- */
-#define   DEFAULT_SEALEVEL        1013.25     // 標準気圧
-#define   SEALEVEL_TEMPERATURE    15          // 海面温度
-RTC_DATA_ATTR float     seaLevelPressure = DEFAULT_SEALEVEL;      // 設定海面気圧
-uint16_t  kAltitude = 0;                      // 標高校正用カウンタ
-
-/*
  * 記録表示
  */
 int       logListOffset = 0;
@@ -178,16 +175,16 @@ int       logListOffset = 0;
  */
 #define SERVICE_UUID                   "181a"                                        // Environment Sensing UUID(0000181a-0000-1000-8000-00805f9b34fb)
 #define CHARACTERISTIC_UUID            "156f7abe-87c8-11eb-8dcd-0242ac130003"        // Generate https://www.uuidgenerator.net/
-#define MAX_SENDINTERVAL               6
 
 BLEServer         *pBLEServer          = NULL;
 BLECharacteristic *pBLECharacteristic  = NULL;
 boolean            bleConnected        = false;
-boolean            oldBleConnected     = false;
-RTC_DATA_ATTR uint16_t          idxBleSendInterval    = 4;
-uint16_t          bleSendInterval[MAX_SENDINTERVAL]    = { 1, 3, 5, 10, 15, 30};
+
+#define           MAX_SENDINTERVAL       6
 #define           BLEDEVICE_NAME         "StickLogger"
-RTC_DATA_ATTR uint8_t bleDeviceNumber  = 0;             // 0:BLE off / 1～7:Number   BLEDEVICE_NAME + bleDeviceNumber
+RTC_DATA_ATTR uint16_t    idxBleSendInterval    = 4;
+uint16_t                  bleSendInterval[MAX_SENDINTERVAL]    = { 1, 3, 5, 10, 15, 30};
+RTC_DATA_ATTR uint8_t     bleDeviceNumber  = 0;             // 0:BLE off / 1～9:Number   BLEDEVICE_NAME + bleDeviceNumber
 
 struct {   // Bluetoothで送信するデータ   2byte * 6 = 12byte
   struct {
@@ -258,6 +255,7 @@ void BLE_Setup();               // BLEデバイス初期化
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       bleConnected = true;
+      BLEDevice::startAdvertising();
     };
 
     void onDisconnect(BLEServer* pServer) {
@@ -328,7 +326,7 @@ void setup() {
  *  
  */
 void BMM150_Calibrate();
-enum ScrnMode { TEMPHUMI, LOGLIST, PRESVOLT };
+enum ScrnMode { TEMPHUMI, LOGLIST };
 void SetupMenu();                 // 設定
 void DispTempHumi();              // 温度・湿度　デカ表示
 void Dispog();             // 温度・湿度　デカ表示
@@ -356,8 +354,6 @@ void loop() {
           BLE_Setup();  
         }
       } else if (pBLEServer != NULL) {
-        delete pBLECharacteristic;
-        delete pBLEServer;
         BLEDevice::deinit(true);
         pBLEServer = NULL;
         setCpuFrequencyMhz(20);
@@ -381,17 +377,6 @@ void loop() {
     }    
   }
   
-  if (scrnMode == PRESVOLT) {
-    if (M5.BtnB.isPressed()) {              // 標高の設定
-      if (kAltitude <= 1) seaLevelPressure = DEFAULT_SEALEVEL;
-      else                seaLevelPressure = AltToPres(-100 * (kAltitude / 2 - 1));     // 再描画間隔が短いと操作性悪い、２で割って0.5間隔で更新
-      kAltitude++;
-      powerOffTime = UINT32_MAX;
-    } else {
-      if (kAltitude > 1) powerOffTime = defaultPowerOffTime + millis();
-      kAltitude = 0;
-    }
-  }
   
   /*--- 電源ソースを調べる ---*/
   pwVolt = M5.Axp.GetVBusVoltage();
@@ -415,9 +400,8 @@ void loop() {
     M5.Rtc.GetTime(&rtcTime);
 
       // 温度アラーム
-    if (temperatureAlarm
-     && (temperature < temperatureLow
-     ||  temperature > temperatureHigh)) {
+    if (tempAlarm
+     && (temperature < tempAlarmLow ||  temperature > tempAlarmHigh)) {
       M5.Lcd.fillScreen(BLACK);
       lcdDblBuf.pushSprite(0,0); 
       M5.Beep.tone(2000);
@@ -502,9 +486,9 @@ void BLE_Setup() {
 
   sprintf(tmpStr,"%s%d",BLEDEVICE_NAME,bleDeviceNumber);
   BLEDevice::init(tmpStr);
+  Serial.printf("Device Name : %s\r\n",tmpStr);
       // Create BLE-Server
-  pBLEServer = BLEDevice::createServer();
-  pBLEServer->setCallbacks(new MyServerCallbacks());
+    pBLEServer = BLEDevice::createServer();
 
       // Create the BLE Service
   BLEService *pBLEService = pBLEServer->createService(SERVICE_UUID);
@@ -512,14 +496,10 @@ void BLE_Setup() {
       // Create a BLE Characteristic
   pBLECharacteristic = pBLEService->createCharacteristic(
                       CHARACTERISTIC_UUID,
-                      BLECharacteristic::PROPERTY_READ   |
-//                      BLECharacteristic::PROPERTY_WRITE  |
-                      BLECharacteristic::PROPERTY_NOTIFY
-//                      BLECharacteristic::PROPERTY_INDICATE
+                      NIMBLE_PROPERTY::READ   |
+                      NIMBLE_PROPERTY::NOTIFY
                     );
                     
-  pBLECharacteristic->addDescriptor(new BLE2902());
-
   // Start the service
   pBLEService->start();
 
@@ -708,10 +688,10 @@ enum MenuPage  SetupMenu2() {
       //-- 温度アラーム値
     lcdDblBuf.setCursor(0,20); lcdDblBuf.printf("TempAlerm");
     lcdDblBuf.setCursor(200,20); 
-    if (temperatureAlarm) lcdDblBuf.printf(" ON");
-    else                  lcdDblBuf.printf("OFF");
+    if (tempAlarm) lcdDblBuf.printf(" ON");
+    else           lcdDblBuf.printf("OFF");
     lcdDblBuf.setCursor(0,40); lcdDblBuf.printf(" Low/High");
-    lcdDblBuf.setCursor(148,40); lcdDblBuf.printf("%3d/%3d",temperatureLow,temperatureHigh);
+    lcdDblBuf.setCursor(148,40); lcdDblBuf.printf("%3d/%3d",tempAlarmLow,tempAlarmHigh);
 
       //-- 時刻
     M5.Rtc.GetData(&rtcDate);
@@ -753,23 +733,23 @@ enum MenuPage  SetupMenu2() {
                 break;
       case 1:     //-- 温度アラーム値 On/Off
                 if (btnAwasPressed) {
-                  temperatureAlarm = !temperatureAlarm;
+                  tempAlarm = !tempAlarm;
                 }
                 lcdDblBuf.setCursor(200,20); 
-                if (temperatureAlarm) lcdDblBuf.printf(" ON");
-                else                  lcdDblBuf.printf("OFF");
+                if (tempAlarm) lcdDblBuf.printf(" ON");
+                else           lcdDblBuf.printf("OFF");
                 break;
       case 2:     // 温度アラーム　LOW
                 if (btnAwasPressed) {
-                  if (++temperatureLow >= MAXSET_TEMPHIGH) temperatureLow = MAXSET_TEMPLOW;
+                  if (++tempAlarmLow >= MAXSET_TEMPHIGH) tempAlarmLow = MAXSET_TEMPLOW;
                 }
-                lcdDblBuf.setCursor(148,40); lcdDblBuf.printf("%3d",temperatureLow);      
+                lcdDblBuf.setCursor(148,40); lcdDblBuf.printf("%3d",tempAlarmLow);      
                 break;
       case 3:     // 温度アラーム　HIGH 
                 if (btnAwasPressed) {
-                  if (++temperatureHigh >= MAXSET_TEMPHIGH) temperatureHigh = MAXSET_TEMPLOW;  
+                  if (++tempAlarmHigh >= MAXSET_TEMPHIGH) tempAlarmHigh = MAXSET_TEMPLOW;  
                 }
-                lcdDblBuf.setCursor(148 + 12 * 4,40); lcdDblBuf.printf("%3d",temperatureHigh);      
+                lcdDblBuf.setCursor(148 + 12 * 4,40); lcdDblBuf.printf("%3d",tempAlarmHigh);      
                 break;
       case 4:     //年
                 if (btnAwasPressed) {
@@ -870,14 +850,14 @@ void DispTempHumi() {
   lcdDblBuf.drawString(tmpStr,x+5,y+6,4);
   lcdDblBuf.setTextColor(TFT_WHITE);
   lcdDblBuf.drawString(tmpStr,x,y,4);
-  lcdDblBuf.setTextSize(1);  lcdDblBuf.setCursor(160,3); lcdDblBuf.printf("C");
+  lcdDblBuf.setTextSize(1);  lcdDblBuf.setTextFont(4); lcdDblBuf.setCursor(160,3); lcdDblBuf.printf("C");
 
     // アラーム設定温度
   x = 165; y = 23;
   lcdDblBuf.setTextFont(2);
   lcdDblBuf.setTextSize(2);
-  lcdDblBuf.setCursor(180, 0); lcdDblBuf.printf("%3d",temperatureHigh);
-  lcdDblBuf.setCursor(180,30); lcdDblBuf.printf("%3d",temperatureLow);
+  lcdDblBuf.setCursor(180, 0); lcdDblBuf.printf("%3d",tempAlarmHigh);
+  lcdDblBuf.setCursor(180,30); lcdDblBuf.printf("%3d",tempAlarmLow);
   
 
   
@@ -890,7 +870,7 @@ void DispTempHumi() {
   lcdDblBuf.drawString(tmpStr,x+5,y+6,4);
   lcdDblBuf.setTextColor(TFT_WHITE);
   lcdDblBuf.drawString(tmpStr,x,y,4);
-  lcdDblBuf.setTextSize(1);  lcdDblBuf.setCursor(160,67); lcdDblBuf.printf("%%");
+  lcdDblBuf.setTextSize(1);  lcdDblBuf.setTextFont(4); lcdDblBuf.setCursor(160,67); lcdDblBuf.printf("%%");
 
   x = 165; y = 25;
 
