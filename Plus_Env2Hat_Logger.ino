@@ -8,13 +8,14 @@
  * 
  * @note
  *   2021/03/26 BLEの接続ー＞切断ー＞接続の手順が正しいかは不明、デバイス名を変える時は一度オフにし、再度違い名前にする
- *                接続・切断の関数化
  *   
  * @version
- *   2021/04/06 Version 1.03　BLEライブラリをNimBLE変更
- *   2021/04/01 Version 1.02　BLE送信実装
- *   2021/03/17 Version 1.01　ログをシリアルモニタへ送信機能
- *   2021/03/16 Version 1.00
+ *   2021/04/08 1.05    アラーム方法の変更（BLE時はブザーナシに）
+ *   2021/04/07 1.04    送信データ構造の変更
+ *   2021/04/06 1.03    BLEライブラリをNimBLE変更
+ *   2021/04/01 1.02    BLE送信実装
+ *   2021/03/17 1.01    ログをシリアルモニタへ送信機能
+ *   2021/03/16 1.00
  * 
 */
 
@@ -35,6 +36,7 @@
 SHT3X                       sht3x;              // 温湿度センサー
 Adafruit_BMP280             bmp280;             // 気圧センサー
 
+#define     LED_PIN       GPIO_NUM_10           // 付属LEDのGPIOの番号
 /*---------------------------------------------------------
  * 大域変数　
  *          処理速度を上げるためにローカル変数や関数呼び出しにスタックを極力使わない
@@ -186,11 +188,16 @@ RTC_DATA_ATTR uint16_t    idxBleSendInterval    = 4;
 uint16_t                  bleSendInterval[MAX_SENDINTERVAL]    = { 1, 3, 5, 10, 15, 30};
 RTC_DATA_ATTR uint8_t     bleDeviceNumber  = 0;             // 0:BLE off / 1～9:Number   BLEDEVICE_NAME + bleDeviceNumber
 
-struct {   // Bluetoothで送信するデータ   2byte * 6 = 12byte
-  struct {
-    uint8_t       id;             // uniqueID 送信側の個々IDに使用
-    uint8_t       unused = 0;     // 未使用
-  } sq;
+struct {   // Bluetoothで送信するデータ   2byte * 7 = 14byte
+  uint8_t         id;             // uniqueID 送信側の個々IDに使用
+  union {
+    struct {
+      char       alarmTL : 1;     // 低温度アラーム
+      char       alarmTH : 1;     // 高温度アラーム
+      char       unused  : 6;     // 未使用
+    };
+    uint8_t       flags;      // statusフラグ
+  };
   struct {                    // 月日
     uint8_t       month;          // 月
     uint8_t       date;           // 日
@@ -281,6 +288,9 @@ void setup() {
   scrnHeight = M5.Lcd.height();
   M5.Rtc.GetData(&rtcDate);
   M5.Rtc.GetTime(&rtcTime);
+  pinMode(LED_PIN,OUTPUT);                        // LED設定
+  digitalWrite(LED_PIN,HIGH);
+
 
     // LCDのダブルバッファーの用意
   lcdDblBuf.createSprite(M5.Lcd.width(),M5.Lcd.height());
@@ -320,6 +330,7 @@ void setup() {
   /* 起動理由の格納 */
   wakeUpCause = esp_sleep_get_wakeup_cause();
 
+  Serial.printf("Struct bleDataPacket size : %d\r\n",sizeof(bleDataPacket));
 }
 
 /*******************************************************
@@ -404,7 +415,7 @@ void loop() {
      && (temperature < tempAlarmLow ||  temperature > tempAlarmHigh)) {
       M5.Lcd.fillScreen(BLACK);
       lcdDblBuf.pushSprite(0,0); 
-      M5.Beep.tone(2000);
+      if (bleDeviceNumber == 0) M5.Beep.tone(2000);
     } else {
       M5.Beep.mute();
     }
@@ -416,7 +427,7 @@ void loop() {
               break;
       case LOGLIST:
               DispLogList();
-              break;      
+              break;
       default:
               DispLogList();
     }
@@ -437,10 +448,16 @@ void loop() {
 
       // BLE送信
     if (bleDeviceNumber) {
-      if (rtcTime.Minutes % bleSendInterval[idxBleSendInterval] == 0) {
+      if ((rtcTime.Minutes % bleSendInterval[idxBleSendInterval] == 0) 
+       || !(wakeUpCause == ESP_SLEEP_WAKEUP_TIMER)) {
         pwVolt = M5.Axp.GetBatVoltage();
-        bleDataPacket.sq.id       = bleDeviceNumber;
-        bleDataPacket.sq.unused   = 0;
+        bleDataPacket.id          = bleDeviceNumber;
+        bleDataPacket.flags       = (uint8_t)0;
+        if (tempAlarm) {
+          if (temperature < tempAlarmLow)  bleDataPacket.alarmTL     = 1;
+          if (temperature > tempAlarmHigh) bleDataPacket.alarmTH     = 1;
+        }
+            
         bleDataPacket.md.month    = rtcDate.Month;
         bleDataPacket.md.date     = rtcDate.Date;
         bleDataPacket.hm.hours    = rtcTime.Hours;
@@ -454,6 +471,11 @@ void loop() {
         delay(10);
       }
     }
+
+   //-------- 充電インジケータ
+    pwCurt = M5.Axp.GetBatCurrent(); //　バッテリー放電電流
+    if (pwCurt > 0.0) digitalWrite(LED_PIN,LOW);
+    else              digitalWrite(LED_PIN,HIGH);
 
   /*--- DeepSleep の設定 
           バッテリーまたはdeepsleepから起動した場合は再びdeepsleepへ
@@ -668,7 +690,7 @@ enum MenuPage  SetupMenu2() {
   uint16_t        btnAwasPressed;   // 単純に関数を毎回呼ぶの嫌だから
   uint32_t        autoExitTime;
 
-                               // 1  2  3  4  5  6  7  8  9 10 11 12
+                               //   1  2  3  4  5  6  7  8  9 10 11 12
   uint16_t        monthDay[12] = { 31,29,31,30,31,30,31,31,30,31,30,31 };
 
   lcdDblBuf.setTextSize(2);
@@ -853,11 +875,11 @@ void DispTempHumi() {
   lcdDblBuf.setTextSize(1);  lcdDblBuf.setTextFont(4); lcdDblBuf.setCursor(160,3); lcdDblBuf.printf("C");
 
     // アラーム設定温度
-  x = 165; y = 23;
+  x = 180; y = 0;
   lcdDblBuf.setTextFont(2);
   lcdDblBuf.setTextSize(2);
-  lcdDblBuf.setCursor(180, 0); lcdDblBuf.printf("%3d",tempAlarmHigh);
-  lcdDblBuf.setCursor(180,30); lcdDblBuf.printf("%3d",tempAlarmLow);
+  lcdDblBuf.setCursor(x,y);    lcdDblBuf.printf("%3d",tempAlarmHigh);
+  lcdDblBuf.setCursor(x,y+30); lcdDblBuf.printf("%3d",tempAlarmLow);
   
 
   
@@ -894,10 +916,20 @@ void DispTempHumi() {
 #ifdef DEBUG_MODE
   pwVolt = M5.Axp.GetBatVoltage();
   lcdDblBuf.setTextSize(1);
-  lcdDblBuf.setCursor(185,60,4);
-  lcdDblBuf.setTextColor(TFT_BLUE);
+  lcdDblBuf.setCursor(175,60,4);
+  lcdDblBuf.setTextColor(TFT_GREENYELLOW);
   lcdDblBuf.printf("%.2fv",pwVolt);
 #endif
+
+    // BLE deviceID
+  x = 210; y = 120;
+  lcdDblBuf.setTextFont(2);
+  lcdDblBuf.setTextSize(1);
+  lcdDblBuf.setTextColor(TFT_CYAN);
+  lcdDblBuf.setCursor(x,y);
+  if (bleDeviceNumber == 0) lcdDblBuf.printf("OFF");
+  else                      lcdDblBuf.printf(" #%d",bleDeviceNumber);
+
 }
 
 /*============================================================================
